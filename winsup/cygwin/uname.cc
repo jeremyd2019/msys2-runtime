@@ -42,6 +42,8 @@ uname_x (struct utsname *name)
 		       msystem ? msystem : msystem_msys,
 		       wincap.osname (), wincap.build_number (),
 		       wincap.is_wow64 () ? "-WOW64" : "");
+      if (memcmp(name->sysname, "CLANG", 5) == 0)
+	memcpy(name->sysname, "MINGW", 5);
       /* nodename */
       memset (buf, 0, sizeof buf);
       cygwin_gethostname (buf, sizeof buf - 1);
@@ -105,6 +107,8 @@ uname (struct utsname *in_name)
       char* msystem = getenv("MSYSTEM");
       const char *msystem_msys = "MSYS";
       __small_sprintf (name->sysname, "%s_%s", msystem ? msystem : msystem_msys, wincap.osname ());
+      if (memcmp(name->sysname, "CLANG", 5) == 0)
+	memcpy(name->sysname, "MINGW", 5);
 #else
       __small_sprintf (name->sysname, "CYGWIN_%s", wincap.osname ());
 #endif
