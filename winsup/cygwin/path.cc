@@ -3670,8 +3670,7 @@ restart:
 		   somewhere else, thus, it's a symlink in POSIX speak. */
 		if (upath.Length == 14)	/* \??\X:\ */
 		  {
-		    fileattr &= ~FILE_ATTRIBUTE_DIRECTORY;
-		    path_flags |= PATH_SYMLINK;
+		    goto file_not_symlink;
 		  }
 		/* For final paths differing in inner path components return
 		   length as negative value.  This informs path_conv::check
