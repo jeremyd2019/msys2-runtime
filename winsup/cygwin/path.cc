@@ -723,9 +723,9 @@ path_conv::check (const char *src, unsigned opt,
 	  int symlen = 0;
 
 	  /* Make sure to check certain flags on last component only. */
-	  for (unsigned pc_flags = opt & (PC_NO_ACCESS_CHECK | PC_KEEP_HANDLE);
+	  for (unsigned pc_flags = opt & (PC_NO_ACCESS_CHECK | PC_KEEP_HANDLE | PC_SYM_FOLLOW | PC_SYM_NOFOLLOW_REP);
 	       ;
-	       pc_flags = 0)
+	       pc_flags = opt & (PC_SYM_FOLLOW | PC_SYM_NOFOLLOW_REP))
 	    {
 	      const suffix_info *suff;
 	      char *full_path;
@@ -3604,6 +3604,8 @@ restart:
 	    break;
 	}
 
+      if ((pc_flags & (PC_SYM_FOLLOW | PC_SYM_NOFOLLOW_REP)) == PC_SYM_FOLLOW)
+      {
       /* Check if the inner path components contain native symlinks or
 	 junctions, or if the drive is a virtual drive.  Compare incoming
 	 path with path returned by GetFinalPathNameByHandleA.  If they
@@ -3681,6 +3683,7 @@ restart:
 		break;
 	      }
 	  }
+      }
       }
 
     /* Normal file. */
@@ -3864,7 +3867,7 @@ chdir (const char *in_dir)
 
       /* Convert path.  PC_NONULLEMPTY ensures that we don't check for
 	 NULL/empty/invalid again. */
-      path_conv path (in_dir, PC_SYM_FOLLOW | PC_POSIX | PC_NONULLEMPTY);
+      path_conv path (in_dir, PC_SYM_FOLLOW | PC_POSIX | PC_NONULLEMPTY | PC_SYM_NOFOLLOW_REP);
       if (path.error)
 	{
 	  set_errno (path.error);
