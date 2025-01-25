@@ -1826,6 +1826,17 @@ fixup_mmaps_after_fork (HANDLE parent)
 		  system_printf ("Warning: Fixup mapping beyond EOF failed");
 		  continue;
 		}
+	      LIST_FOREACH (map_list, &mmapped_areas.lists, ml_next)
+	        {
+		  LIST_FOREACH (rec, &map_list->recs, mr_next)
+		    {
+		      system_printf ("fd %d, h %p, address %p, len %ly, prot: %y, "
+				    "flags: %y, offset %Y",
+				    rec->get_fd (), rec->get_handle (), rec->get_address (),
+				    rec->get_len (), rec->get_prot (), rec->get_flags (),
+				    rec->get_offset ());
+		    }
+		}
 	      return -1;
 	    }
 
