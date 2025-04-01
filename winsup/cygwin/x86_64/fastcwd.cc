@@ -12,30 +12,12 @@
 #include "udis86/extern.h"
 
 class fcwd_access_t;
-
-/* Helper function to get the absolute address of an rip-relative instruction
-   by summing the current instruction's pc (rip), the current instruction's
-   length, and the signed 32-bit displacement in the operand.  Optionally, an
-   additional offset is subtracted to deal with the case where a member of a
-   struct is being referenced by the instruction but the address of the struct
-   is desired.
-*/
-static inline const void *
-rip_rel_offset (const ud_t *ud_obj, const ud_operand_t *opr, int sub_off=0)
-{
-  assert ((opr->type == UD_OP_JIMM && opr->size == 32) ||
-	  (opr->type == UD_OP_MEM && opr->base == UD_R_RIP &&
-	   opr->index == UD_NONE && opr->scale == 0 && opr->offset == 32));
-
-  return (const void *) (ud_insn_off (ud_obj) + ud_insn_len (ud_obj) +
-			 opr->lval.sdword - sub_off);
-}
+#define PTR_BITS (sizeof (void *) * 8)
 
 /* This function scans the code in ntdll.dll to find the address of the
    global variable used to access the CWD.  While the pointer is global,
    it's not exported from the DLL, unfortunately.  Therefore we have to
    use some knowledge to figure out the address. */
-
 fcwd_access_t **
 find_fast_cwd_pointer_x86_64 ()
 {
@@ -52,31 +34,31 @@ find_fast_cwd_pointer_x86_64 ()
   /* Initialize udis86 */
   ud_t ud_obj;
   ud_init (&ud_obj);
-  /* Set 64-bit mode */
-  ud_set_mode (&ud_obj, 64);
+  /* Set mode to current bitness */
+  ud_set_mode (&ud_obj, PTR_BITS);
   ud_set_input_buffer (&ud_obj, get_dir, 80);
   /* Set pc (rip) so that subsequent calls to ud_insn_off will return the pc of
      the instruction, saving us the hassle of tracking it ourselves */
   ud_set_pc (&ud_obj, (uint64_t) get_dir);
-  const ud_operand_t *opr, *opr0;
-  ud_mnemonic_code_t insn;
+  /* some short names for more readable code */
+  const ud_operand_t &opr0 = ud_obj.operand[0],
+		     &opr1 = ud_obj.operand[1];
+  const ud_mnemonic_code_t &insn = ud_obj.mnemonic;
   ud_type_t reg = UD_NONE;
+
   /* Search first relative call instruction in RtlGetCurrentDirectory_U. */
   const uint8_t *use_cwd = NULL;
-  while (ud_disassemble (&ud_obj) &&
-      (insn = ud_insn_mnemonic (&ud_obj)) != UD_Iret &&
-      insn != UD_Ijmp)
+  while (ud_disassemble (&ud_obj) && insn != UD_Iret && insn != UD_Ijmp)
     {
       if (insn == UD_Icall)
 	{
-	  opr = ud_insn_opr (&ud_obj, 0);
-	  if (opr->type == UD_OP_JIMM && opr->size == 32)
+	  if (opr0.type == UD_OP_JIMM && opr0.size == 32)
 	    {
 	      /* Fetch offset from instruction and compute address of called
 		 function.  This function actually fetches the current FAST_CWD
 		 instance and performs some other actions, not important to us.
 	       */
-	      use_cwd = (const uint8_t *) rip_rel_offset (&ud_obj, opr);
+	      use_cwd = (const uint8_t *) (ud_obj.pc + opr0.lval.sdword);
 	      break;
 	    }
 	}
@@ -90,23 +72,18 @@ find_fast_cwd_pointer_x86_64 ()
      we basically look for the RtlEnterCriticalSection call and test if the
      code uses the FastPebLock. */
   PRTL_CRITICAL_SECTION lockaddr = NULL;
-
-  while (ud_disassemble (&ud_obj) &&
-      (insn = ud_insn_mnemonic (&ud_obj)) != UD_Iret &&
-      insn != UD_Ijmp)
+  while (ud_disassemble (&ud_obj) && insn != UD_Iret && insn != UD_Ijmp)
     {
       if (insn == UD_Ilea)
 	{
 	  /* udis86 seems to follow intel syntax, in that operand 0 is the
 	     dest and 1 is the src */
-	  opr0 = ud_insn_opr (&ud_obj, 0);
-	  opr = ud_insn_opr (&ud_obj, 1);
-	  if (opr->type == UD_OP_MEM && opr->base == UD_R_RIP &&
-	      opr->index == UD_NONE && opr->scale == 0 && opr->offset == 32 &&
-	      opr0->type == UD_OP_REG && opr0->size == 64)
+	  if (opr1.type == UD_OP_MEM && opr1.base == UD_R_RIP &&
+	      opr1.index == UD_NONE && opr1.scale == 0 && opr1.offset == 32 &&
+	      opr0.type == UD_OP_REG && opr0.size == PTR_BITS)
 	    {
-	      lockaddr = (PRTL_CRITICAL_SECTION) rip_rel_offset (&ud_obj, opr);
-	      reg = opr0->base;
+	      lockaddr = (PRTL_CRITICAL_SECTION) (ud_obj.pc + opr1.lval.sdword);
+	      reg = opr0.base;
 	      break;
 	    }
 	}
@@ -121,17 +98,13 @@ find_fast_cwd_pointer_x86_64 ()
   bool found = false;
   if (reg != UD_R_RCX)
     {
-      while (ud_disassemble (&ud_obj) &&
-	  (insn = ud_insn_mnemonic (&ud_obj)) != UD_Iret &&
-	  insn != UD_Ijmp)
+      while (ud_disassemble (&ud_obj) && insn != UD_Iret && insn != UD_Ijmp)
 	{
 	  if (insn == UD_Imov)
 	    {
-	      opr0 = ud_insn_opr (&ud_obj, 0);
-	      opr = ud_insn_opr (&ud_obj, 1);
-	      if (opr->type == UD_OP_REG && opr->size == 64 &&
-		  opr->base == reg && opr0->type == UD_OP_REG &&
-		  opr0->size == 64 && opr0->base == UD_R_RCX)
+	      if (opr1.type == UD_OP_REG && opr1.size == PTR_BITS &&
+		  opr1.base == reg && opr0.type == UD_OP_REG &&
+		  opr0.size == PTR_BITS && opr0.base == UD_R_RCX)
 		{
 		  found = true;
 		  break;
@@ -144,16 +117,13 @@ find_fast_cwd_pointer_x86_64 ()
 
   /* Next is the `callq RtlEnterCriticalSection' */
   found = false;
-  while (ud_disassemble (&ud_obj) &&
-      (insn = ud_insn_mnemonic (&ud_obj)) != UD_Iret &&
-      insn != UD_Ijmp)
+  while (ud_disassemble (&ud_obj) && insn != UD_Iret && insn != UD_Ijmp)
     {
       if (insn == UD_Icall)
 	{
-	  opr = ud_insn_opr (&ud_obj, 0);
-	  if (opr->type == UD_OP_JIMM && opr->size == 32)
+	  if (opr0.type == UD_OP_JIMM && opr0.size == 32)
 	    {
-	      if (ent_crit != rip_rel_offset (&ud_obj, opr))
+	      if (ent_crit != (const void *) (ud_obj.pc + opr0.lval.sdword))
 		return NULL;
 	      found = true;
 	      break;
@@ -164,37 +134,30 @@ find_fast_cwd_pointer_x86_64 ()
     return NULL;
 
   fcwd_access_t **f_cwd_ptr = NULL;
-  /* now we're looking for a mov rel(%rip), %<reg64> */
-  while (ud_disassemble (&ud_obj) &&
-      (insn = ud_insn_mnemonic (&ud_obj)) != UD_Iret &&
-      insn != UD_Ijmp)
+  /* now we're looking for a mov rel(%rip), %<reg> */
+  while (ud_disassemble (&ud_obj) && insn != UD_Iret && insn != UD_Ijmp)
     {
       if (insn == UD_Imov)
 	{
-	  opr0 = ud_insn_opr (&ud_obj, 0);
-	  opr = ud_insn_opr (&ud_obj, 1);
-	  if (opr->type == UD_OP_MEM && opr->size == 64 &&
-	      opr->base == UD_R_RIP && opr->index == UD_NONE &&
-	      opr->scale == 0 && opr->offset == 32 &&
-	      opr0->type == UD_OP_REG && opr0->size == 64)
+	  if (opr1.type == UD_OP_MEM && opr1.size == PTR_BITS &&
+	      opr1.base == UD_R_RIP && opr1.index == UD_NONE &&
+	      opr1.scale == 0 && opr1.offset == 32 &&
+	      opr0.type == UD_OP_REG && opr0.size == PTR_BITS)
 	    {
-	      f_cwd_ptr = (fcwd_access_t **) rip_rel_offset (&ud_obj, opr);
-	      reg = opr0->base;
+	      f_cwd_ptr = (fcwd_access_t **) (ud_obj.pc + opr1.lval.sdword);
+	      reg = opr0.base;
 	      break;
 	    }
 	}
     }
   /* Check that the next instruction is a test. */
-  if (!f_cwd_ptr || !ud_disassemble (&ud_obj) ||
-      ud_insn_mnemonic (&ud_obj) != UD_Itest)
+  if (!f_cwd_ptr || !ud_disassemble (&ud_obj) || insn != UD_Itest)
     return NULL;
 
   /* ... and that it's testing the same register that the mov above loaded the
      f_cwd_ptr into against itself */
-  opr0 = ud_insn_opr (&ud_obj, 0);
-  opr = ud_insn_opr (&ud_obj, 1);
-  if (opr->type != UD_OP_REG || opr->size != 64 || opr->base != reg ||
-      opr0->type != opr->type || opr0->size != 64 || opr0->base != opr->base)
+  if (opr0.type != UD_OP_REG || opr0.size != PTR_BITS || opr0.base != reg ||
+      opr1.type != UD_OP_REG || opr1.size != PTR_BITS || opr1.base != reg)
     return NULL;
   return f_cwd_ptr;
 }
