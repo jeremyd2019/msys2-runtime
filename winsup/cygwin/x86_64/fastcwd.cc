@@ -41,8 +41,8 @@ find_fast_cwd_pointer_x86_64 ()
      the instruction, saving us the hassle of tracking it ourselves */
   ud_set_pc (&ud_obj, (uint64_t) get_dir);
   /* some short names for more readable code */
-  const ud_operand_t &opr0 = ud_obj.operand[0],
-		     &opr1 = ud_obj.operand[1];
+  const ud_operand_t &opr0 = *(ud_insn_opr (&ud_obj, 0) ?: &ud_obj.operand[0]),
+		     &opr1 = *(ud_insn_opr (&ud_obj, 1) ?: &ud_obj.operand[1]);
   const ud_mnemonic_code_t &insn = ud_obj.mnemonic;
   ud_type_t reg = UD_NONE;
 
