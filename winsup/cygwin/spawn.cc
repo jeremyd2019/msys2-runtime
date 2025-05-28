@@ -10,6 +10,8 @@ details. */
 #include <stdlib.h>
 #include <unistd.h>
 #include <process.h>
+#include <spawn.h>
+#include <sys/queue.h>
 #include <sys/wait.h>
 #include <wchar.h>
 #include <ctype.h>
@@ -1405,4 +1407,72 @@ __posix_spawn_execvpe (const char *path, char * const *argv, char *const *envp,
 		   argv, envp, _P_OVERLAY);
   __posix_spawn_sem_release (sem, errno);
   return -1;
+}
+
+/* HACK: duplicate some structs from newlib/libc/posix/posix_spawn.c */
+struct __posix_spawn_file_actions {
+  STAILQ_HEAD(, __posix_spawn_file_actions_entry) fa_list;
+};
+
+typedef struct __posix_spawn_file_actions_entry {
+  STAILQ_ENTRY(__posix_spawn_file_actions_entry) fae_list;
+  enum {
+    FAE_OPEN,
+    FAE_DUP2,
+    FAE_CLOSE,
+    FAE_CHDIR,
+    FAE_FCHDIR
+  } fae_action;
+
+  int fae_fildes;
+  union {
+    struct {
+      char *path;
+#define fae_path	fae_data.open.path
+      int oflag;
+#define fae_oflag	fae_data.open.oflag
+      mode_t mode;
+#define fae_mode	fae_data.open.mode
+    } open;
+    struct {
+      int newfildes;
+#define fae_newfildes	fae_data.dup2.newfildes
+    } dup2;
+    char *dir;
+#define fae_dir		fae_data.dir
+    int dirfd;
+#define fae_dirfd		fae_data.dirfd
+  } fae_data;
+} posix_spawn_file_actions_entry_t;
+
+static int
+do_posix_spawn (pid_t *pid, const char *path,
+		const posix_spawn_file_actions_t *fa,
+		const posix_spawnattr_t *sa, char * const argv[],
+		char * const envp[], int use_env_path)
+{
+  syscall_printf ("posix_spawn%s (%p, %s, %p, %p, %p, %p)",
+      use_env_path ? "p" : "", pid, path, fa, sa, argv, envp);
+  if (use_env_path)
+    return posix_spawnp (pid, path, fa, sa, argv, envp);
+  else
+    return posix_spawn (pid, path, fa, sa, argv, envp);
+}
+
+extern "C" int
+cygwin_posix_spawn (pid_t *pid, const char *path,
+		    const posix_spawn_file_actions_t *fa,
+		    const posix_spawnattr_t *sa, char * const argv[],
+		    char * const envp[])
+{
+  return do_posix_spawn (pid, path, fa, sa, argv, envp, 0);
+}
+
+extern "C" int
+cygwin_posix_spawnp (pid_t *pid, const char *path,
+		     const posix_spawn_file_actions_t *fa,
+		     const posix_spawnattr_t *sa, char * const argv[],
+		     char * const envp[])
+{
+  return do_posix_spawn (pid, path, fa, sa, argv, envp, 1);
 }
