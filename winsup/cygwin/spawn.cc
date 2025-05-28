@@ -281,7 +281,7 @@ extern DWORD mutex_timeout; /* defined in fhandler_termios.cc */
 int
 child_info_spawn::worker (const char *prog_arg, const char *const *argv,
 			  const char *const envp[], int mode,
-			  int in__stdin, int in__stdout)
+			  int in__stdin, int in__stdout, int in__stderr)
 {
   bool rc;
   int res = -1;
@@ -547,6 +547,7 @@ child_info_spawn::worker (const char *prog_arg, const char *const *argv,
       set (chtype, real_path.iscygexec ());
       __stdin = in__stdin;
       __stdout = in__stdout;
+      __stderr = in__stderr;
       record_children ();
 
       si.lpReserved2 = (LPBYTE) this;
@@ -609,7 +610,7 @@ child_info_spawn::worker (const char *prog_arg, const char *const *argv,
 
       int fileno_stdin = in__stdin < 0 ? 0 : in__stdin;
       int fileno_stdout = in__stdout < 0 ? 1 : in__stdout;
-      int fileno_stderr = 2;
+      int fileno_stderr = in__stderr < 0 ? 2 : in__stderr;
 
       bool no_pcon = mode != _P_OVERLAY && mode != _P_WAIT;
       term_spawn_worker.setup (iscygwin (), handle (fileno_stdin, false),
