@@ -1451,8 +1451,104 @@ do_posix_spawn (pid_t *pid, const char *path,
 		const posix_spawnattr_t *sa, char * const argv[],
 		char * const envp[], int use_env_path)
 {
+  short flags;
   syscall_printf ("posix_spawn%s (%p, %s, %p, %p, %p, %p)",
       use_env_path ? "p" : "", pid, path, fa, sa, argv, envp);
+
+  /* TODO: possibly implement spawnattr flags:
+     POSIX_SPAWN_RESETIDS
+     POSIX_SPAWN_SETPGROUP
+     POSIX_SPAWN_SETSCHEDPARAM
+     POSIX_SPAWN_SETSCHEDULER
+     POSIX_SPAWN_SETSIGDEF
+     POSIX_SPAWN_SETSIGMASK */
+  if (sa && (posix_spawnattr_getflags (sa, &flags) || flags))
+    goto fallback;
+
+  {
+    path_conv buf;
+    lock_process now;
+    posix_spawn_file_actions_entry_t *fae;
+    pid_t chpid;
+    int fds[3] = {-1, -1, -1};
+    int oldflags[cygheap->fdtab.size];
+    int ret = -1;
+    memset (oldflags, -1, sizeof (oldflags));
+
+    if (fa)
+      {
+	STAILQ_FOREACH(fae, &(*fa)->fa_list, fae_list)
+	  {
+	    switch (fae->fae_action)
+	      {
+	      case __posix_spawn_file_actions_entry::FAE_DUP2:
+		if (fae->fae_newfildes < 0 || fae->fae_newfildes > 2)
+		  goto closes;
+		if (fae->fae_fildes >= 0 && fae->fae_fildes <= 2 &&
+		    fds[fae->fae_fildes] != -1)
+		  fds[fae->fae_newfildes] = dup (fds[fae->fae_fildes]);
+		else
+		  fds[fae->fae_newfildes] = dup (fae->fae_fildes);
+		oldflags[fae->fae_newfildes] = fcntl (fae->fae_newfildes,
+						      F_GETFD, 0);
+		fcntl (fae->fae_newfildes, F_SETFD, FD_CLOEXEC);
+		break;
+
+	      case __posix_spawn_file_actions_entry::FAE_OPEN:
+		if (fae->fae_fildes < 0 || fae->fae_fildes > 2)
+		  goto closes;
+		fds[fae->fae_fildes] = open (fae->fae_path, fae->fae_oflag,
+					     fae->fae_mode);
+		if (fds[fae->fae_fildes] < 0)
+		  {
+		    fds[fae->fae_fildes] = -1;
+		    ret = get_errno ();
+		    goto closes;
+		  }
+		fcntl (fds[fae->fae_fildes], F_SETFD, 0);
+		fallthrough;
+	      case __posix_spawn_file_actions_entry::FAE_CLOSE:
+		oldflags[fae->fae_fildes] = fcntl (fae->fae_fildes, F_GETFD, 0);
+		fcntl (fae->fae_fildes, F_SETFD, FD_CLOEXEC);
+		break;
+	      /* TODO: FAE_(F)CHDIR */
+	      default:
+		goto closes;
+	      }
+	  }
+      }
+
+    chpid = ch_spawn.worker (
+	use_env_path ? (find_exec (path, buf, "PATH", FE_NNF) ?: "")
+		     : path,
+	argv, envp ?: environ,
+	_P_NOWAIT | (use_env_path ? _P_PATH_TYPE_EXEC : 0),
+	fds[0], fds[1], fds[2]);
+
+    if (chpid < 0)
+      {
+	ret = get_errno ();
+      }
+    else
+      {
+	*pid = chpid;
+	ret = 0;
+      }
+
+closes:
+    int save_errno = get_errno ();
+    for (size_t i = 0; i < 3; i++)
+      if (fds[i] != -1)
+	close (fds[i]);
+    for (size_t i = 0; i < sizeof (oldflags) / sizeof (oldflags[0]); i++)
+      if (oldflags[i] != -1)
+	fcntl (i, F_SETFD, oldflags[i]);
+    set_errno (save_errno);
+    if (ret != -1)
+      return ret;
+  }
+
+fallback:
   if (use_env_path)
     return posix_spawnp (pid, path, fa, sa, argv, envp);
   else
